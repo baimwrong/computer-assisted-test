@@ -1,0 +1,11 @@
+name,email,student_id,role,password,phone
+Michael Scott,michael.scott@cat-test.local,REG-2026-101,candidate,Password@123,+1555111222
+Pam Beesly,pam.beesly@cat-test.local,REG-2026-102,candidate,Password@123,+1555222333
+Jim Halpert,jim.halpert@cat-test.local,REG-2026-103,candidate,Password@123,+1555333444
+Dwight Schrute,dwight.schrute@cat-test.local,REG-2026-104,candidate,Password@123,+1555444555
+Angela Martin,angela.martin@cat-test.local,REG-2026-105,candidate,Password@123,+1555555666
+Stanley Hudson,stanley.hudson@cat-test.local,REG-2026-106,candidate,Password@123,+1555666777
+Kevin Malone,kevin.malone@cat-test.local,REG-2026-107,candidate,Password@123,+1555777888
+Oscar Martinez,oscar.martinez@cat-test.local,REG-2026-108,candidate,Password@123,+1555888999
+Toby Flenderson,toby.flenderson@cat-test.local,STAFF-PROCTOR-02,proctor,Proctor@2026,+1555999000
+Kelly Kapoor,kelly.kapoor@cat-test.local,REG-2026-109,candidate,Password@123,+1555000111
