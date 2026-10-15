@@ -55,6 +55,7 @@
                                 $optText = $opt ? $opt->option_text : '';
                             @endphp
                             <div class="input-group mb-2">
+                                <input type="hidden" name="option_ids[]" value="{{ $opt?->id }}">
                                 <span class="input-group-text bg-light fw-bold">{{ $letters[$i] }}</span>
                                 <div class="input-group-text bg-white">
                                     <input class="form-check-input choice-selector mt-0" type="{{ $question->question_type === 'multiple_choice' ? 'checkbox' : 'radio' }}" name="correct_options[]" value="{{ $i }}" {{ $isCorrect ? 'checked' : '' }}>

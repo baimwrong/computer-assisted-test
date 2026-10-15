@@ -273,6 +273,7 @@
             attemptId: {{ $attempt->id }},
             remainingSeconds: {{ $remainingSeconds }},
             autosaveUrl: "{{ route('candidate.exam.autosave', $attempt) }}",
+            heartbeatUrl: "{{ route('candidate.exam.heartbeat', $attempt) }}",
             violationUrl: "{{ route('candidate.exam.violation', $attempt) }}",
             submitUrl: "{{ route('candidate.exam.submit', $attempt) }}",
             csrfToken: "{{ csrf_token() }}",

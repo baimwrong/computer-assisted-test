@@ -100,6 +100,7 @@ Route::middleware('auth')->group(function () {
         Route::post('/exam/{exam}/start', [ExamTakingController::class, 'start'])->name('exam.start');
         Route::get('/exam/{attempt}/take', [ExamTakingController::class, 'take'])->name('exam.take');
         Route::post('/exam/{attempt}/autosave', [ExamTakingController::class, 'autosave'])->name('exam.autosave');
+        Route::post('/exam/{attempt}/heartbeat', [ExamTakingController::class, 'heartbeat'])->name('exam.heartbeat');
         Route::post('/exam/{attempt}/violation', [ExamTakingController::class, 'logViolation'])->name('exam.violation');
         Route::post('/exam/{attempt}/submit', [ExamTakingController::class, 'submit'])->name('exam.submit');
         Route::get('/exam/{attempt}/result', [ExamTakingController::class, 'result'])->name('exam.result');

@@ -3,9 +3,11 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\StoreCandidateRequest;
 use App\Models\User;
 use App\Services\AuditLogService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
 class CandidateController extends Controller
@@ -19,11 +21,11 @@ class CandidateController extends Controller
             ]);
 
         if ($request->filled('search')) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('name', 'ilike', "%{$search}%")
-                  ->orWhere('email', 'ilike', "%{$search}%")
-                  ->orWhere('student_id', 'ilike', "%{$search}%");
+            $term = '%' . strtolower($request->search) . '%';
+            $query->where(function ($q) use ($term) {
+                $q->where(DB::raw('LOWER(name)'), 'LIKE', $term)
+                  ->orWhere(DB::raw('LOWER(email)'), 'LIKE', $term)
+                  ->orWhere(DB::raw('LOWER(student_id)'), 'LIKE', $term);
             });
         }
 
@@ -37,17 +39,9 @@ class CandidateController extends Controller
         return view('admin.candidates.create');
     }
 
-    public function store(Request $request)
+    public function store(StoreCandidateRequest $request)
     {
-        $validated = $request->validate([
-            'name'       => ['required', 'string', 'max:255'],
-            'email'      => ['required', 'email', 'max:255', 'unique:users,email'],
-            'student_id' => ['nullable', 'string', 'max:50', 'unique:users,student_id'],
-            'password'   => ['required', 'string', 'min:6'],
-            'phone'      => ['nullable', 'string', 'max:30'],
-            'role'       => ['required', 'in:candidate,proctor,admin'],
-        ]);
-
+        $validated = $request->validated();
         $validated['password'] = Hash::make($validated['password']);
         $validated['is_active'] = true;
 
@@ -75,6 +69,10 @@ class CandidateController extends Controller
 
     public function destroy(User $candidate)
     {
+        if ($candidate->examAttempts()->exists()) {
+            return back()->with('error', "Cannot delete candidate '{$candidate->name}' because exam attempts exist. Deactivate the account instead to preserve test records.");
+        }
+
         $name = $candidate->name;
         $candidate->delete();
 

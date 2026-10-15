@@ -36,6 +36,25 @@ class ExamTakingController extends Controller
             return redirect()->route('candidate.exam.take', $activeAttempt);
         }
 
+        // Enforce maximum attempts limit (default 1 attempt)
+        $completedAttemptsCount = ExamAttempt::where('exam_id', $exam->id)
+            ->where('user_id', $user->id)
+            ->whereIn('status', ['completed', 'timed_out', 'terminated_violation'])
+            ->count();
+
+        $maxAttempts = $exam->max_attempts ?? 1;
+        if ($completedAttemptsCount >= $maxAttempts) {
+            $lastAttempt = ExamAttempt::where('exam_id', $exam->id)
+                ->where('user_id', $user->id)
+                ->latest('id')
+                ->first();
+
+            if ($lastAttempt) {
+                return redirect()->route('candidate.exam.result', $lastAttempt)
+                    ->with('info', "You have already completed the maximum permitted attempts ({$maxAttempts}) for this examination.");
+            }
+        }
+
         $exam->load('category');
         $questionCount = $exam->questions()->where('is_active', true)->count();
 
@@ -48,6 +67,18 @@ class ExamTakingController extends Controller
     public function start(Request $request, Exam $exam)
     {
         $user = Auth::user();
+
+        // Enforce maximum attempts limit before starting new attempt
+        $completedAttemptsCount = ExamAttempt::where('exam_id', $exam->id)
+            ->where('user_id', $user->id)
+            ->whereIn('status', ['completed', 'timed_out', 'terminated_violation'])
+            ->count();
+
+        $maxAttempts = $exam->max_attempts ?? 1;
+        if ($completedAttemptsCount >= $maxAttempts) {
+            return redirect()->route('candidate.dashboard')
+                ->with('error', "Maximum attempt limit ({$maxAttempts}) reached for this examination.");
+        }
 
         try {
             $attempt = $this->engineService->startAttempt(
@@ -91,6 +122,18 @@ class ExamTakingController extends Controller
                 return array_search($q->id, $order);
             })
             ->values();
+
+        // Apply attempt's deterministic option order if shuffled
+        $optionsOrder = $attempt->metadata['options_order'] ?? [];
+        if (!empty($optionsOrder)) {
+            foreach ($questions as $q) {
+                if (isset($optionsOrder[$q->id])) {
+                    $optOrder = $optionsOrder[$q->id];
+                    $sortedOptions = $q->options->sortBy(fn($o) => array_search($o->id, $optOrder))->values();
+                    $q->setRelation('options', $sortedOptions);
+                }
+            }
+        }
 
         // Load existing answers keyed by question_id
         $answers = $attempt->answers->keyBy('question_id');
@@ -155,6 +198,23 @@ class ExamTakingController extends Controller
         );
 
         return response()->json($result);
+    }
+
+    /**
+     * Periodic candidate heartbeat for session keep-alive, timer sync, and live proctor updates.
+     */
+    public function heartbeat(ExamAttempt $attempt): JsonResponse
+    {
+        $this->authorizeAttempt($attempt);
+
+        return response()->json([
+            'status'            => $attempt->status,
+            'remaining_seconds' => $attempt->remainingSeconds(),
+            'answered_count'    => $attempt->answered_questions,
+            'total_questions'   => $attempt->total_questions,
+            'violations'        => $attempt->violation_count,
+            'result_url'        => route('candidate.exam.result', $attempt),
+        ]);
     }
 
     /**

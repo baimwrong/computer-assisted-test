@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\StoreQuestionRequest;
+use App\Http\Requests\Admin\UpdateQuestionRequest;
 use App\Models\Category;
 use App\Models\Exam;
 use App\Models\Question;
@@ -34,7 +36,8 @@ class QuestionController extends Controller
         }
 
         if ($request->filled('search')) {
-            $query->where('question_text', 'ilike', "%{$request->search}%");
+            $term = '%' . strtolower($request->search) . '%';
+            $query->where(DB::raw('LOWER(question_text)'), 'LIKE', $term);
         }
 
         $questions = $query->latest()->paginate(15);
@@ -53,19 +56,9 @@ class QuestionController extends Controller
         return view('admin.questions.create', compact('exams', 'categories', 'selectedExamId'));
     }
 
-    public function store(Request $request)
+    public function store(StoreQuestionRequest $request)
     {
-        $validated = $request->validate([
-            'exam_id'         => ['nullable', 'exists:exams,id'],
-            'category_id'     => ['nullable', 'exists:categories,id'],
-            'question_text'   => ['required', 'string'],
-            'question_type'   => ['required', 'in:single_choice,multiple_choice,true_false,short_answer'],
-            'points'          => ['required', 'numeric', 'min:0.1'],
-            'negative_points' => ['nullable', 'numeric', 'min:0'],
-            'difficulty'      => ['required', 'in:easy,medium,hard'],
-            'explanation'     => ['nullable', 'string'],
-        ]);
-
+        $validated = $request->validated();
         $validated['negative_points'] = $validated['negative_points'] ?? 0;
         $validated['is_active'] = true;
 
@@ -140,67 +133,108 @@ class QuestionController extends Controller
         return view('admin.questions.edit', compact('question', 'exams', 'categories'));
     }
 
-    public function update(Request $request, Question $question)
+    public function update(UpdateQuestionRequest $request, Question $question)
     {
-        $validated = $request->validate([
-            'exam_id'         => ['nullable', 'exists:exams,id'],
-            'category_id'     => ['nullable', 'exists:categories,id'],
-            'question_text'   => ['required', 'string'],
-            'question_type'   => ['required', 'in:single_choice,multiple_choice,true_false,short_answer'],
-            'points'          => ['required', 'numeric', 'min:0.1'],
-            'negative_points' => ['nullable', 'numeric', 'min:0'],
-            'difficulty'      => ['required', 'in:easy,medium,hard'],
-            'explanation'     => ['nullable', 'string'],
-        ]);
+        $validated = $request->validated();
 
         DB::transaction(function () use ($request, $question, $validated) {
             $question->update($validated);
-            $question->options()->delete();
 
             $type = $validated['question_type'];
+            $existingOptions = $question->options->keyBy('id');
+            $keptIds = [];
 
             if ($type === 'true_false') {
                 $correct = $request->input('tf_correct', 'true');
-                QuestionOption::create([
-                    'question_id' => $question->id,
-                    'option_text' => 'True',
-                    'is_correct'  => $correct === 'true',
-                    'order_index' => 1,
-                ]);
-                QuestionOption::create([
-                    'question_id' => $question->id,
-                    'option_text' => 'False',
-                    'is_correct'  => $correct === 'false',
-                    'order_index' => 2,
-                ]);
+                
+                $trueOpt = $question->options->firstWhere('order_index', 1) 
+                    ?? $question->options->firstWhere('option_text', 'True');
+                $falseOpt = $question->options->firstWhere('order_index', 2) 
+                    ?? $question->options->firstWhere('option_text', 'False');
+
+                if ($trueOpt) {
+                    $trueOpt->update(['option_text' => 'True', 'is_correct' => $correct === 'true', 'order_index' => 1]);
+                    $keptIds[] = $trueOpt->id;
+                } else {
+                    $newTrue = QuestionOption::create([
+                        'question_id' => $question->id,
+                        'option_text' => 'True',
+                        'is_correct'  => $correct === 'true',
+                        'order_index' => 1,
+                    ]);
+                    $keptIds[] = $newTrue->id;
+                }
+
+                if ($falseOpt) {
+                    $falseOpt->update(['option_text' => 'False', 'is_correct' => $correct === 'false', 'order_index' => 2]);
+                    $keptIds[] = $falseOpt->id;
+                } else {
+                    $newFalse = QuestionOption::create([
+                        'question_id' => $question->id,
+                        'option_text' => 'False',
+                        'is_correct'  => $correct === 'false',
+                        'order_index' => 2,
+                    ]);
+                    $keptIds[] = $newFalse->id;
+                }
             } elseif ($type === 'short_answer') {
-                $answers = explode('|', $request->input('short_answers', ''));
+                $answers = array_values(array_filter(array_map('trim', explode('|', $request->input('short_answers', '')))));
+                $existingList = $question->options->values();
+
                 foreach ($answers as $idx => $ans) {
-                    if (trim($ans) !== '') {
-                        QuestionOption::create([
-                            'question_id' => $question->id,
-                            'option_text' => trim($ans),
+                    $existingItem = $existingList[$idx] ?? null;
+                    if ($existingItem) {
+                        $existingItem->update([
+                            'option_text' => $ans,
                             'is_correct'  => true,
                             'order_index' => $idx + 1,
                         ]);
+                        $keptIds[] = $existingItem->id;
+                    } else {
+                        $newOpt = QuestionOption::create([
+                            'question_id' => $question->id,
+                            'option_text' => $ans,
+                            'is_correct'  => true,
+                            'order_index' => $idx + 1,
+                        ]);
+                        $keptIds[] = $newOpt->id;
                     }
                 }
             } else {
                 $options = $request->input('options', []);
+                $optionIds = $request->input('option_ids', []);
                 $correctOptions = (array) $request->input('correct_options', []);
 
                 $order = 1;
                 foreach ($options as $key => $optText) {
-                    if (trim($optText) !== '') {
-                        QuestionOption::create([
-                            'question_id' => $question->id,
+                    if (trim($optText) === '') {
+                        continue;
+                    }
+
+                    $optId = isset($optionIds[$key]) ? (int) $optionIds[$key] : null;
+                    $isCorrect = in_array((string)$key, array_map('strval', $correctOptions), true);
+
+                    if ($optId && $existingOptions->has($optId)) {
+                        $existingOptions[$optId]->update([
                             'option_text' => trim($optText),
-                            'is_correct'  => in_array((string)$key, array_map('strval', $correctOptions), true),
+                            'is_correct'  => $isCorrect,
                             'order_index' => $order++,
                         ]);
+                        $keptIds[] = $optId;
+                    } else {
+                        $newOpt = QuestionOption::create([
+                            'question_id' => $question->id,
+                            'option_text' => trim($optText),
+                            'is_correct'  => $isCorrect,
+                            'order_index' => $order++,
+                        ]);
+                        $keptIds[] = $newOpt->id;
                     }
                 }
             }
+
+            // Remove any options that were dropped without deleting surviving options
+            $question->options()->whereNotIn('id', $keptIds)->delete();
 
             AuditLogService::log('update_question', 'Question', $question->id);
         });
@@ -210,6 +244,10 @@ class QuestionController extends Controller
 
     public function destroy(Question $question)
     {
+        if ($question->attemptAnswers()->exists()) {
+            return back()->with('error', 'Cannot delete this question because candidate answers exist for it. Deactivate it instead.');
+        }
+
         $id = $question->id;
         $question->delete();
 

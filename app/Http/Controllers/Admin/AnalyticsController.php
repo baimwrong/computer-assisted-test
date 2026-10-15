@@ -22,13 +22,13 @@ class AnalyticsController extends Controller
         $passedCount = ExamAttempt::where('is_passed', true)->count();
         $failedCount = ExamAttempt::where('status', 'completed')->where('is_passed', false)->count();
 
-        // Score averages per exam
+        // Score averages per exam (ANSI SQL compliant across PostgreSQL, MySQL, and SQLite)
         $examScores = Exam::select('exams.id', 'exams.title')
             ->join('exam_attempts', 'exams.id', '=', 'exam_attempts.exam_id')
             ->where('exam_attempts.status', 'completed')
             ->groupBy('exams.id', 'exams.title')
-            ->selectRaw('ROUND(AVG(exam_attempts.score)::numeric, 2) as avg_score')
-            ->selectRaw('ROUND(AVG(exam_attempts.percentage)::numeric, 1) as avg_pct')
+            ->selectRaw('ROUND(CAST(AVG(exam_attempts.score) AS decimal(8,2)), 2) as avg_score')
+            ->selectRaw('ROUND(CAST(AVG(exam_attempts.percentage) AS decimal(8,2)), 1) as avg_pct')
             ->get();
 
         // Violation breakdown

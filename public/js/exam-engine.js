@@ -20,6 +20,14 @@ class CatExamEngine {
         this.timerInterval = null;
         this.violationCount = config.initialViolations || 0;
         this.isSubmitting = false;
+        this.lastViolationTime = 0;
+        this.violationCooldownMs = 4000;
+        this.isProcessingViolation = false;
+        this.hasEnteredFullscreen = false;
+        this.heartbeatUrl = config.heartbeatUrl || null;
+        this.heartbeatInterval = null;
+        this.heartbeatIntervalMs = 25000;
+        this.debounceTimers = {};
 
         this.init();
     }
@@ -28,6 +36,7 @@ class CatExamEngine {
         this.initTimer();
         this.initNavigation();
         this.initAnswerListeners();
+        this.initHeartbeat();
         this.initAntiCheat();
         this.updatePaletteView();
         this.showQuestion(0);
@@ -134,10 +143,29 @@ class CatExamEngine {
                 this.showQuestion(targetIndex);
             });
         });
+
+        // Intercept final submit form to flush any pending debounced answers
+        const submitForm = document.getElementById('final-submit-form');
+        if (submitForm) {
+            submitForm.addEventListener('submit', () => {
+                this.flushPendingAnswers();
+            });
+        }
     }
 
     showQuestion(index) {
         if (index < 0 || index >= this.totalQuestions) return;
+
+        // Flush any pending debounced response on current question before switching
+        if (this.questionsOrder && this.questionsOrder[this.currentIndex] !== undefined) {
+            const prevQId = this.questionsOrder[this.currentIndex];
+            if (this.debounceTimers && this.debounceTimers[prevQId]) {
+                clearTimeout(this.debounceTimers[prevQId]);
+                delete this.debounceTimers[prevQId];
+                this.performSaveAnswer(prevQId);
+            }
+        }
+
         this.currentIndex = index;
 
         // Hide all question panels
@@ -171,24 +199,48 @@ class CatExamEngine {
     // Response Autosave
     // ----------------------------------------------------
     initAnswerListeners() {
-        // Radio / checkbox selection
+        // Radio / checkbox selection (debounced 300ms to eliminate rapid spamming)
         document.querySelectorAll('.answer-input').forEach((input) => {
             input.addEventListener('change', (e) => {
                 const qId = parseInt(input.dataset.questionId, 10);
-                this.saveQuestionAnswer(qId);
+                this.saveQuestionAnswer(qId, false, 300);
             });
         });
 
-        // Text input responses (on blur or keyup debounce)
+        // Text input responses: input event debounced 600ms, blur saved immediately
         document.querySelectorAll('.text-answer-input').forEach((textarea) => {
+            textarea.addEventListener('input', (e) => {
+                const qId = parseInt(textarea.dataset.questionId, 10);
+                this.saveQuestionAnswer(qId, false, 600);
+            });
+
             textarea.addEventListener('blur', (e) => {
                 const qId = parseInt(textarea.dataset.questionId, 10);
-                this.saveQuestionAnswer(qId);
+                this.saveQuestionAnswer(qId, true);
             });
         });
     }
 
-    saveQuestionAnswer(questionId) {
+    saveQuestionAnswer(questionId, immediate = false, delayMs = 350) {
+        if (!questionId) return;
+
+        if (this.debounceTimers[questionId]) {
+            clearTimeout(this.debounceTimers[questionId]);
+            delete this.debounceTimers[questionId];
+        }
+
+        if (immediate) {
+            this.performSaveAnswer(questionId);
+        } else {
+            this.setSyncStatus('saving');
+            this.debounceTimers[questionId] = setTimeout(() => {
+                delete this.debounceTimers[questionId];
+                this.performSaveAnswer(questionId);
+            }, delayMs);
+        }
+    }
+
+    performSaveAnswer(questionId) {
         this.setSyncStatus('saving');
 
         const block = document.getElementById(`question-block-${questionId}`);
@@ -229,18 +281,137 @@ class CatExamEngine {
             },
             body: JSON.stringify(payload),
         })
-        .then(res => res.json())
+        .then(res => {
+            if (res.status === 419) {
+                this.setSyncStatus('error');
+                console.warn('Session or CSRF token expired on autosave.');
+                return null;
+            }
+            return res.json();
+        })
         .then(data => {
+            if (!data) return;
+
             if (data.success) {
                 this.setSyncStatus('saved');
                 this.updateAnswerStats(data.answered_questions, data.total_questions);
                 this.updatePaletteView();
+
+                // Synchronize client timer if server indicates large clock drift
+                if (typeof data.remaining_seconds === 'number' && Math.abs(data.remaining_seconds - this.remainingSeconds) > 10) {
+                    this.remainingSeconds = data.remaining_seconds;
+                }
             } else {
                 this.setSyncStatus('error');
             }
         })
         .catch(() => {
             this.setSyncStatus('error');
+        });
+    }
+
+    flushPendingAnswers() {
+        if (!this.debounceTimers) return;
+
+        Object.keys(this.debounceTimers).forEach((qId) => {
+            clearTimeout(this.debounceTimers[qId]);
+            this.performSaveAnswer(parseInt(qId, 10));
+        });
+        this.debounceTimers = {};
+    }
+
+    // ----------------------------------------------------
+    // Session Keep-Alive & Real-Time Sync Heartbeat
+    // ----------------------------------------------------
+    initHeartbeat() {
+        if (!this.heartbeatUrl) return;
+
+        this.heartbeatInterval = setInterval(() => {
+            this.sendHeartbeat();
+        }, this.heartbeatIntervalMs);
+    }
+
+    sendHeartbeat() {
+        if (this.isSubmitting) return;
+
+        fetch(this.heartbeatUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': this.csrfToken,
+                'Accept': 'application/json',
+            },
+            body: JSON.stringify({}),
+        })
+        .then(res => {
+            if (res.status === 419) {
+                console.warn('Heartbeat session ping received 419 (CSRF mismatch).');
+                return null;
+            }
+            return res.json();
+        })
+        .then(data => {
+            if (!data) return;
+
+            // 1. Detect if proctor or system terminated / completed the attempt
+            if (data.status && data.status !== 'in_progress') {
+                clearInterval(this.timerInterval);
+                clearInterval(this.heartbeatInterval);
+                this.isSubmitting = true;
+
+                const msg = data.status === 'terminated_violation' 
+                    ? 'Your exam was terminated by proctor due to security violations.' 
+                    : 'Your exam has been finalized and submitted by the proctor.';
+
+                if (window.Swal) {
+                    Swal.fire({
+                        title: 'Exam Concluded',
+                        text: msg,
+                        icon: data.status === 'terminated_violation' ? 'error' : 'info',
+                        allowOutsideClick: false,
+                        confirmButtonText: 'View Results',
+                    }).then(() => {
+                        window.location.href = data.result_url || this.submitUrl;
+                    });
+                } else {
+                    alert(msg);
+                    window.location.href = data.result_url || this.submitUrl;
+                }
+                return;
+            }
+
+            // 2. Resynchronize clock if proctor added extra time or client drifted
+            if (typeof data.remaining_seconds === 'number') {
+                const diff = data.remaining_seconds - this.remainingSeconds;
+                if (Math.abs(diff) > 5) {
+                    this.remainingSeconds = data.remaining_seconds;
+
+                    if (diff > 5) {
+                        const addedMins = Math.round(diff / 60);
+                        if (window.Swal) {
+                            const Toast = Swal.mixin({
+                                toast: true,
+                                position: 'top-end',
+                                showConfirmButton: false,
+                                timer: 4000,
+                                timerProgressBar: true
+                            });
+                            Toast.fire({
+                                icon: 'info',
+                                title: `Proctor granted extra time: +${addedMins} min`
+                            });
+                        }
+                    }
+                }
+            }
+
+            // 3. Update answered count if available
+            if (data.answered_count !== undefined && data.total_questions !== undefined) {
+                this.updateAnswerStats(data.answered_count, data.total_questions);
+            }
+        })
+        .catch(err => {
+            console.warn('Heartbeat ping failed:', err);
         });
     }
 
@@ -263,7 +434,7 @@ class CatExamEngine {
             }
         }
 
-        this.saveQuestionAnswer(currentQId);
+        this.saveQuestionAnswer(currentQId, true);
     }
 
     clearCurrentResponse() {
@@ -275,7 +446,7 @@ class CatExamEngine {
         const textInput = block.querySelector('.text-answer-input');
         if (textInput) textInput.value = '';
 
-        this.saveQuestionAnswer(currentQId);
+        this.saveQuestionAnswer(currentQId, true);
     }
 
     setSyncStatus(status) {
@@ -347,27 +518,44 @@ class CatExamEngine {
 
         // Fullscreen Change Detection
         document.addEventListener('fullscreenchange', () => {
-            if (!document.fullscreenElement && !this.isSubmitting) {
+            if (document.fullscreenElement) {
+                this.hasEnteredFullscreen = true;
+            } else if (this.hasEnteredFullscreen && !this.isSubmitting) {
                 this.recordViolation('exit_fullscreen', 'Candidate exited full-screen mode.');
             }
         });
 
-        // Tab Switch / Visibility Change
+        // Tab Switch / Visibility Change (Primary detector for tab-switching and minimizing)
         document.addEventListener('visibilitychange', () => {
             if (document.hidden && !this.isSubmitting) {
                 this.recordViolation('tab_switch', 'Browser window lost visibility / tab switched.');
             }
         });
 
-        // Window Blur (Focus lost to other apps)
+        // Window Blur (Focus lost to other OS windows/apps)
         window.addEventListener('blur', () => {
-            if (!this.isSubmitting) {
-                this.recordViolation('window_blur', 'Window lost focus to another background application.');
-            }
+            // Deduplicate: If document is already hidden, visibilitychange already handled it
+            if (document.hidden || this.isSubmitting) return;
+
+            // Ignore blur caused by native or Bootstrap in-page dialogs
+            if (document.querySelector('.modal.show') || (window.Swal && Swal.isVisible())) return;
+
+            this.recordViolation('window_blur', 'Window lost focus to another background application.');
         });
     }
 
     recordViolation(type, details) {
+        if (this.isSubmitting) return;
+
+        const now = Date.now();
+        // Enforce cooldown to prevent rapid event cascading
+        if (now - this.lastViolationTime < this.violationCooldownMs || this.isProcessingViolation) {
+            return;
+        }
+
+        this.lastViolationTime = now;
+        this.isProcessingViolation = true;
+
         fetch(this.violationUrl, {
             method: 'POST',
             headers: {
@@ -389,13 +577,14 @@ class CatExamEngine {
                         allowOutsideClick: false,
                         showConfirmButton: true,
                     }).then(() => {
-                        window.location.href = window.location.href; // refresh to result
+                        window.location.reload();
                     });
                 } else {
                     alert(data.message);
-                    window.location.href = window.location.href;
+                    window.location.reload();
                 }
             } else if (data.status === 'warning') {
+                this.violationCount = data.violation_count;
                 if (window.Swal) {
                     Swal.fire({
                         title: 'Security Warning!',
@@ -408,6 +597,12 @@ class CatExamEngine {
                     });
                 }
             }
+        })
+        .catch(err => {
+            console.warn('[AntiCheat] Violation reporting error:', err);
+        })
+        .finally(() => {
+            this.isProcessingViolation = false;
         });
     }
 }

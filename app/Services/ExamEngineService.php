@@ -22,27 +22,27 @@ class ExamEngineService
      */
     public function startAttempt(Exam $exam, User $user, string $ipAddress, ?string $userAgent = null): ExamAttempt
     {
-        // Check for active attempt
-        $existing = ExamAttempt::where('exam_id', $exam->id)
-            ->where('user_id', $user->id)
-            ->where('status', 'in_progress')
-            ->first();
-
-        if ($existing) {
-            // Check if expired
-            if ($existing->isExpired()) {
-                return $this->gradingService->gradeAttempt($existing, 'timed_out');
-            }
-            return $existing;
-        }
-
-        // Verify exam availability
-        if (!$exam->isAvailable()) {
-            throw new Exception('This examination is currently not active or available.');
-        }
-
         return DB::transaction(function () use ($exam, $user, $ipAddress, $userAgent) {
-            $questionsQuery = $exam->questions()->where('is_active', true);
+            // Check for active attempt with pessimistic lock to prevent double-start race condition
+            $existing = ExamAttempt::where('exam_id', $exam->id)
+                ->where('user_id', $user->id)
+                ->where('status', 'in_progress')
+                ->lockForUpdate()
+                ->first();
+
+            if ($existing) {
+                if ($existing->isExpired()) {
+                    return $this->gradingService->gradeAttempt($existing, 'timed_out');
+                }
+                return $existing;
+            }
+
+            // Verify exam availability
+            if (!$exam->isAvailable()) {
+                throw new Exception('This examination is currently not active or available.');
+            }
+
+            $questionsQuery = $exam->questions()->with('options')->where('is_active', true);
             $questions = $questionsQuery->get();
 
             if ($questions->isEmpty()) {
@@ -55,12 +55,27 @@ class ExamEngineService
 
             $questionOrder = $questions->pluck('id')->all();
 
+            // Deterministic option shuffling per attempt
+            $optionsOrder = [];
+            if ($exam->shuffle_options) {
+                foreach ($questions as $q) {
+                    if ($q->options->isNotEmpty()) {
+                        $optionsOrder[$q->id] = $q->options->pluck('id')->shuffle()->values()->all();
+                    }
+                }
+            }
+
             $attemptCount = ExamAttempt::where('exam_id', $exam->id)
                 ->where('user_id', $user->id)
                 ->count();
 
             $startedAt = Carbon::now();
             $expiresAt = $startedAt->copy()->addMinutes($exam->duration_minutes);
+
+            // Cap expires_at to exam end_time if scheduled
+            if ($exam->end_time && $expiresAt->gt($exam->end_time)) {
+                $expiresAt = $exam->end_time->copy();
+            }
 
             $attempt = ExamAttempt::create([
                 'exam_id'            => $exam->id,
@@ -75,8 +90,9 @@ class ExamEngineService
                 'ip_address'         => $ipAddress,
                 'user_agent'         => $userAgent,
                 'metadata'           => [
-                    'question_order' => $questionOrder,
+                    'question_order'  => $questionOrder,
                     'shuffle_options' => $exam->shuffle_options,
+                    'options_order'   => $optionsOrder,
                 ],
             ]);
 
@@ -115,9 +131,14 @@ class ExamEngineService
             throw new Exception('Exam duration has expired. Test has been automatically submitted.');
         }
 
-        $answer = AttemptAnswer::where('attempt_id', $attempt->id)
-            ->where('question_id', $questionId)
-            ->firstOrFail();
+        $answer = AttemptAnswer::firstOrCreate(
+            ['attempt_id' => $attempt->id, 'question_id' => $questionId],
+            [
+                'selected_option_ids'  => null,
+                'text_answer'          => null,
+                'is_marked_for_review' => false,
+            ]
+        );
 
         $updateData = ['answered_at' => Carbon::now()];
 

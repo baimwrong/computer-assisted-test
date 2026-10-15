@@ -16,19 +16,38 @@ class ExamGradingService
     public function gradeAttempt(ExamAttempt $attempt, string $finalStatus = 'completed'): ExamAttempt
     {
         return DB::transaction(function () use ($attempt, $finalStatus) {
-            $exam = $attempt->exam;
-            $attempt->load(['answers.question.options']);
+            // Lock attempt row to prevent double-grading race condition
+            $lockedAttempt = ExamAttempt::where('id', $attempt->id)->lockForUpdate()->first();
+            if (!$lockedAttempt || $lockedAttempt->status !== 'in_progress') {
+                return $lockedAttempt ?? $attempt;
+            }
 
-            $totalQuestions = $attempt->answers->count();
+            $exam = $lockedAttempt->exam;
+            $lockedAttempt->load(['answers.question.options']);
+
+            $examQuestions = $exam->questions()->with('options')->where('is_active', true)->get();
+            $answersByQuestionId = $lockedAttempt->answers->keyBy('question_id');
+
+            $totalQuestions = $examQuestions->count();
             $answeredCount = 0;
             $correctCount = 0;
             $incorrectCount = 0;
             $totalEarnedPoints = 0.00;
             $possibleTotalPoints = 0.00;
 
-            foreach ($attempt->answers as $answer) {
-                $question = $answer->question;
+            foreach ($examQuestions as $question) {
                 $possibleTotalPoints += (float) $question->points;
+                $answer = $answersByQuestionId->get($question->id);
+
+                if (!$answer) {
+                    $answer = AttemptAnswer::create([
+                        'attempt_id'           => $lockedAttempt->id,
+                        'question_id'          => $question->id,
+                        'selected_option_ids'  => null,
+                        'text_answer'          => null,
+                        'is_marked_for_review' => false,
+                    ]);
+                }
 
                 $hasAnswered = false;
                 $isCorrect = false;
@@ -56,9 +75,19 @@ class ExamGradingService
                             $correctIds = $question->options->where('is_correct', true)->pluck('id')->map(fn($id) => (int) $id)->values()->all();
                             sort($selectedOptionIds);
                             sort($correctIds);
+
                             if ($selectedOptionIds === $correctIds) {
                                 $isCorrect = true;
                                 $pointsAwarded = (float) $question->points;
+                            } else {
+                                // Proportional partial credit if selected choices contain no wrong answers
+                                $chosenCorrect = array_intersect($selectedOptionIds, $correctIds);
+                                $chosenWrong = array_diff($selectedOptionIds, $correctIds);
+                                if (!empty($chosenCorrect) && empty($chosenWrong) && count($correctIds) > 0) {
+                                    $partialFraction = count($chosenCorrect) / count($correctIds);
+                                    $pointsAwarded = round((float) $question->points * $partialFraction, 2);
+                                    $isCorrect = true; // partial pass, exempt from negative penalty
+                                }
                             }
                         }
                         break;
@@ -67,9 +96,15 @@ class ExamGradingService
                         $text = trim((string) $answer->text_answer);
                         if ($text !== '') {
                             $hasAnswered = true;
-                            // Check against correct options or explanation keywords
-                            $correctAnswers = $question->options->pluck('option_text')->map(fn($t) => strtolower(trim($t)))->all();
-                            if (in_array(strtolower($text), $correctAnswers, true)) {
+                            // Clean input: collapse duplicate spaces and strip surrounding punctuation
+                            $normalizedInput = strtolower(preg_replace('/\s+/', ' ', trim($text, " \t\n\r\0\x0B.,;:!?")));
+                            $correctAnswers = $question->options
+                                ->where('is_correct', true)
+                                ->pluck('option_text')
+                                ->map(fn($t) => strtolower(preg_replace('/\s+/', ' ', trim($t, " \t\n\r\0\x0B.,;:!?"))))
+                                ->all();
+
+                            if (in_array($normalizedInput, $correctAnswers, true)) {
                                 $isCorrect = true;
                                 $pointsAwarded = (float) $question->points;
                             }
@@ -83,9 +118,11 @@ class ExamGradingService
                         $correctCount++;
                     } else {
                         $incorrectCount++;
-                        // Apply negative marking if configured on exam or question
+                        // Apply negative marking: question penalty overrides exam rate if specified
                         if ($exam->negative_marking) {
-                            $penalty = (float) ($question->negative_points > 0 ? $question->negative_points : ($exam->negative_mark_rate ?? 0));
+                            $penalty = ($question->negative_points !== null && (float) $question->negative_points >= 0)
+                                ? (float) $question->negative_points
+                                : (float) ($exam->negative_mark_rate ?? 0);
                             $pointsAwarded -= $penalty;
                         }
                     }
@@ -109,9 +146,9 @@ class ExamGradingService
 
             $isPassed = $percentage >= (float) $exam->pass_percentage;
 
-            $attempt->update([
+            $lockedAttempt->update([
                 'status'              => $finalStatus,
-                'submitted_at'        => $attempt->submitted_at ?? Carbon::now(),
+                'submitted_at'        => $lockedAttempt->submitted_at ?? Carbon::now(),
                 'total_questions'     => $totalQuestions,
                 'answered_questions'  => $answeredCount,
                 'correct_answers'     => $correctCount,
@@ -121,7 +158,7 @@ class ExamGradingService
                 'is_passed'           => $isPassed,
             ]);
 
-            return $attempt->fresh();
+            return $lockedAttempt->fresh();
         });
     }
 }

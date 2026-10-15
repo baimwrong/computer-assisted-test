@@ -3,12 +3,15 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\StoreExamRequest;
+use App\Http\Requests\Admin\UpdateExamRequest;
 use App\Models\Category;
 use App\Models\Exam;
 use App\Models\ExamAttempt;
 use App\Services\AuditLogService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class ExamController extends Controller
@@ -19,10 +22,10 @@ class ExamController extends Controller
             ->withCount(['questions', 'attempts']);
 
         if ($request->filled('search')) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('title', 'ilike', "%{$search}%")
-                  ->orWhere('code', 'ilike', "%{$search}%");
+            $term = '%' . strtolower($request->search) . '%';
+            $query->where(function ($q) use ($term) {
+                $q->where(DB::raw('LOWER(title)'), 'LIKE', $term)
+                  ->orWhere(DB::raw('LOWER(code)'), 'LIKE', $term);
             });
         }
 
@@ -46,42 +49,9 @@ class ExamController extends Controller
         return view('admin.exams.create', compact('categories'));
     }
 
-    public function store(Request $request)
+    public function store(StoreExamRequest $request)
     {
-        $validated = $request->validate([
-            'category_id'             => ['required', 'exists:categories,id'],
-            'title'                   => ['required', 'string', 'max:255'],
-            'code'                    => ['required', 'string', 'max:50', 'unique:exams,code'],
-            'description'             => ['nullable', 'string'],
-            'instructions'            => ['nullable', 'string'],
-            'duration_minutes'        => ['required', 'integer', 'min:1', 'max:600'],
-            'pass_percentage'         => ['required', 'numeric', 'min:0', 'max:100'],
-            'total_marks'             => ['required', 'numeric', 'min:1'],
-            'shuffle_questions'       => ['boolean'],
-            'shuffle_options'         => ['boolean'],
-            'show_result_instant'     => ['boolean'],
-            'allow_review'            => ['boolean'],
-            'negative_marking'        => ['boolean'],
-            'negative_mark_rate'      => ['nullable', 'numeric', 'min:0'],
-            'enforce_fullscreen'      => ['boolean'],
-            'max_violations'          => ['required', 'integer', 'min:1', 'max:20'],
-            'auto_submit_on_violation'=> ['boolean'],
-            'start_time'              => ['nullable', 'date'],
-            'end_time'                => ['nullable', 'date', 'after_or_equal:start_time'],
-            'status'                  => ['required', 'in:draft,published,archived'],
-        ]);
-
-        $validated['shuffle_questions'] = $request->boolean('shuffle_questions');
-        $validated['shuffle_options'] = $request->boolean('shuffle_options');
-        $validated['show_result_instant'] = $request->boolean('show_result_instant');
-        $validated['allow_review'] = $request->boolean('allow_review');
-        $validated['negative_marking'] = $request->boolean('negative_marking');
-        $validated['enforce_fullscreen'] = $request->boolean('enforce_fullscreen');
-        $validated['auto_submit_on_violation'] = $request->boolean('auto_submit_on_violation');
-        $validated['is_active'] = $request->status === 'published';
-        $validated['created_by'] = Auth::id();
-
-        $exam = Exam::create($validated);
+        $exam = Exam::create($request->payload());
 
         AuditLogService::log('create_exam', 'Exam', $exam->id, ['code' => $exam->code, 'title' => $exam->title]);
 
@@ -116,41 +86,9 @@ class ExamController extends Controller
         return view('admin.exams.edit', compact('exam', 'categories'));
     }
 
-    public function update(Request $request, Exam $exam)
+    public function update(UpdateExamRequest $request, Exam $exam)
     {
-        $validated = $request->validate([
-            'category_id'             => ['required', 'exists:categories,id'],
-            'title'                   => ['required', 'string', 'max:255'],
-            'code'                    => ['required', 'string', 'max:50', "unique:exams,code,{$exam->id}"],
-            'description'             => ['nullable', 'string'],
-            'instructions'            => ['nullable', 'string'],
-            'duration_minutes'        => ['required', 'integer', 'min:1', 'max:600'],
-            'pass_percentage'         => ['required', 'numeric', 'min:0', 'max:100'],
-            'total_marks'             => ['required', 'numeric', 'min:1'],
-            'shuffle_questions'       => ['boolean'],
-            'shuffle_options'         => ['boolean'],
-            'show_result_instant'     => ['boolean'],
-            'allow_review'            => ['boolean'],
-            'negative_marking'        => ['boolean'],
-            'negative_mark_rate'      => ['nullable', 'numeric', 'min:0'],
-            'enforce_fullscreen'      => ['boolean'],
-            'max_violations'          => ['required', 'integer', 'min:1', 'max:20'],
-            'auto_submit_on_violation'=> ['boolean'],
-            'start_time'              => ['nullable', 'date'],
-            'end_time'                => ['nullable', 'date', 'after_or_equal:start_time'],
-            'status'                  => ['required', 'in:draft,published,archived'],
-        ]);
-
-        $validated['shuffle_questions'] = $request->boolean('shuffle_questions');
-        $validated['shuffle_options'] = $request->boolean('shuffle_options');
-        $validated['show_result_instant'] = $request->boolean('show_result_instant');
-        $validated['allow_review'] = $request->boolean('allow_review');
-        $validated['negative_marking'] = $request->boolean('negative_marking');
-        $validated['enforce_fullscreen'] = $request->boolean('enforce_fullscreen');
-        $validated['auto_submit_on_violation'] = $request->boolean('auto_submit_on_violation');
-        $validated['is_active'] = $request->status === 'published';
-
-        $exam->update($validated);
+        $exam->update($request->payload());
 
         AuditLogService::log('update_exam', 'Exam', $exam->id, ['code' => $exam->code]);
 
@@ -159,6 +97,10 @@ class ExamController extends Controller
 
     public function destroy(Exam $exam)
     {
+        if ($exam->attempts()->exists()) {
+            return back()->with('error', "Cannot delete exam '{$exam->title}' because candidate attempts exist. Archive or deactivate the exam instead to preserve historical records.");
+        }
+
         $title = $exam->title;
         $exam->delete();
 

@@ -23,6 +23,10 @@ Artisan::command('cat:cleanup-expired-attempts', function (ExamGradingService $g
     $count = 0;
     foreach ($expiredAttempts as $attempt) {
         $gradingService->gradeAttempt($attempt, 'timed_out');
+        \App\Services\AuditLogService::log('exam_auto_submitted_timeout', 'ExamAttempt', $attempt->id, [
+            'candidate_id' => $attempt->user_id,
+            'exam_id'      => $attempt->exam_id,
+        ], $attempt->user_id);
         $count++;
     }
 

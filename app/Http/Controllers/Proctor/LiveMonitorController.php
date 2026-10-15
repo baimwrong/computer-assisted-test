@@ -55,6 +55,7 @@ class LiveMonitorController extends Controller
                 'answered_questions' => $att->answered_questions,
                 'total_questions'    => $att->total_questions,
                 'remaining_seconds'  => $att->remainingSeconds(),
+                'status'             => $att->status,
                 'violation_count'    => $att->violation_count,
                 'ip_address'         => $att->ip_address,
                 'started_at'         => $att->started_at->toTimeString(),
