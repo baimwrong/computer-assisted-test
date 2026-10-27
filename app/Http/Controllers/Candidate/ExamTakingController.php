@@ -36,6 +36,20 @@ class ExamTakingController extends Controller
             return redirect()->route('candidate.exam.take', $activeAttempt);
         }
 
+        // Verify scheduled availability window for new attempts
+        if (!$exam->isAvailable()) {
+            if ($exam->isUpcoming()) {
+                return redirect()->route('candidate.dashboard')
+                    ->with('warning', "Exam '{$exam->title}' has not opened yet. Scheduled to begin at {$exam->start_time->format('M d, Y H:i T')}.");
+            }
+            if ($exam->isExpiredSchedule()) {
+                return redirect()->route('candidate.dashboard')
+                    ->with('warning', "Exam '{$exam->title}' has closed. It concluded at {$exam->end_time->format('M d, Y H:i T')}.");
+            }
+            return redirect()->route('candidate.dashboard')
+                ->with('error', "Exam '{$exam->title}' is currently unavailable.");
+        }
+
         // Enforce maximum attempts limit (default 1 attempt)
         $completedAttemptsCount = ExamAttempt::where('exam_id', $exam->id)
             ->where('user_id', $user->id)
@@ -67,6 +81,11 @@ class ExamTakingController extends Controller
     public function start(Request $request, Exam $exam)
     {
         $user = Auth::user();
+
+        if (!$exam->isAvailable()) {
+            return redirect()->route('candidate.dashboard')
+                ->with('error', "Exam '{$exam->title}' is not open for new attempts.");
+        }
 
         // Enforce maximum attempts limit before starting new attempt
         $completedAttemptsCount = ExamAttempt::where('exam_id', $exam->id)
@@ -158,6 +177,10 @@ class ExamTakingController extends Controller
         ]);
 
         try {
+            if ($attempt->status === 'in_progress') {
+                $attempt->update(['last_seen_at' => \Carbon\Carbon::now()]);
+            }
+
             $answer = $this->engineService->autosaveAnswer(
                 $attempt,
                 $validated['question_id'],
@@ -207,6 +230,10 @@ class ExamTakingController extends Controller
     {
         $this->authorizeAttempt($attempt);
 
+        if ($attempt->status === 'in_progress') {
+            $attempt->update(['last_seen_at' => \Carbon\Carbon::now()]);
+        }
+
         return response()->json([
             'status'            => $attempt->status,
             'remaining_seconds' => $attempt->remainingSeconds(),
@@ -240,6 +267,12 @@ class ExamTakingController extends Controller
     public function result(ExamAttempt $attempt)
     {
         $this->authorizeAttempt($attempt);
+
+        if (!$attempt->isCompleted()) {
+            return redirect()->route('candidate.exam.take', $attempt)
+                ->with('info', 'Your examination session is still in progress.');
+        }
+
         $attempt->load(['exam.category', 'answers.question']);
 
         return view('candidate.exam.result', compact('attempt'));
@@ -251,6 +284,12 @@ class ExamTakingController extends Controller
     public function review(ExamAttempt $attempt)
     {
         $this->authorizeAttempt($attempt);
+
+        if (!$attempt->isCompleted()) {
+            return redirect()->route('candidate.exam.take', $attempt)
+                ->with('warning', 'Detailed question review is only available after your examination is completed.');
+        }
+
         $exam = $attempt->exam;
 
         if (!$exam->allow_review) {

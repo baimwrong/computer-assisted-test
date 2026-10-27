@@ -31,12 +31,18 @@
                 </div>
 
                 <!-- Big Result Badge Matrix -->
+                @php
+                    $maxPossibleScore = $attempt->answers->sum(fn($a) => (float)($a->question->points ?? 0));
+                    if ($maxPossibleScore <= 0) {
+                        $maxPossibleScore = (float)$attempt->exam->total_marks;
+                    }
+                @endphp
                 <div class="row g-3 text-center mb-4">
                     <div class="col-6 col-md-3">
                         <div class="p-3 bg-light rounded-3 border">
                             <span class="text-muted small d-block">Score Obtained</span>
                             <h3 class="fw-bold mb-0 text-primary">{{ $attempt->score }}</h3>
-                            <small class="text-muted">Target: {{ $attempt->exam->total_marks }}</small>
+                            <small class="text-muted">Max: {{ $maxPossibleScore }} Marks</small>
                         </div>
                     </div>
                     <div class="col-6 col-md-3">

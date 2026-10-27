@@ -87,9 +87,19 @@
                     </div>
                 </div>
                 <div class="card-footer bg-white border-0 pb-3 pt-0">
-                    <a href="{{ route('candidate.exam.lobby', $exam) }}" class="btn btn-outline-primary w-100 fw-semibold">
-                        Enter Exam Lobby <i class="bi bi-arrow-right ms-1"></i>
-                    </a>
+                    @if ($exam->isUpcoming())
+                        <button class="btn btn-outline-secondary w-100 fw-semibold" disabled>
+                            <i class="bi bi-calendar-event me-1"></i> Opens {{ $exam->start_time->format('M d, H:i') }}
+                        </button>
+                    @elseif ($exam->isExpiredSchedule())
+                        <button class="btn btn-outline-danger w-100 fw-semibold" disabled>
+                            <i class="bi bi-x-circle me-1"></i> Concluded
+                        </button>
+                    @else
+                        <a href="{{ route('candidate.exam.lobby', $exam) }}" class="btn btn-outline-primary w-100 fw-semibold">
+                            Enter Exam Lobby <i class="bi bi-arrow-right ms-1"></i>
+                        </a>
+                    @endif
                 </div>
             </div>
         </div>

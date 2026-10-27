@@ -107,6 +107,8 @@ class LiveMonitorTest extends TestCase
 
     public function test_api_sessions_returns_active_attempts_json(): void
     {
+        $this->attempt->update(['last_seen_at' => Carbon::now()]);
+
         $response = $this->actingAs($this->proctor)
             ->getJson(route('proctor.monitor.api.sessions'));
 
@@ -120,11 +122,14 @@ class LiveMonitorTest extends TestCase
                     'status',
                     'violation_count',
                     'remaining_seconds',
+                    'connection_status',
+                    'last_seen_at',
                 ],
             ],
         ]);
         $response->assertJsonFragment([
-            'candidate_name' => 'Test Candidate',
+            'candidate_name'    => 'Test Candidate',
+            'connection_status' => 'online',
         ]);
     }
 
@@ -163,5 +168,38 @@ class LiveMonitorTest extends TestCase
         $this->attempt->refresh();
         $this->assertEquals('terminated_violation', $this->attempt->status);
         $this->assertNotNull($this->attempt->submitted_at);
+    }
+
+    public function test_proctor_can_reset_candidate_violations(): void
+    {
+        $this->attempt->update(['violation_count' => 3]);
+
+        $response = $this->actingAs($this->proctor)
+            ->post(route('proctor.monitor.reset-violations', $this->attempt));
+
+        $response->assertSessionHas('success');
+        $this->attempt->refresh();
+        $this->assertEquals(0, $this->attempt->violation_count);
+    }
+
+    public function test_proctor_can_resume_terminated_or_suspended_attempt(): void
+    {
+        $this->attempt->update([
+            'status'          => 'terminated_violation',
+            'submitted_at'    => Carbon::now()->subMinutes(5),
+            'violation_count' => 5,
+        ]);
+
+        $response = $this->actingAs($this->proctor)
+            ->post(route('proctor.monitor.resume', $this->attempt), [
+                'minutes' => 20,
+            ]);
+
+        $response->assertSessionHas('success');
+        $this->attempt->refresh();
+        $this->assertEquals('in_progress', $this->attempt->status);
+        $this->assertNull($this->attempt->submitted_at);
+        $this->assertEquals(0, $this->attempt->violation_count);
+        $this->assertTrue($this->attempt->expires_at->gt(Carbon::now()));
     }
 }

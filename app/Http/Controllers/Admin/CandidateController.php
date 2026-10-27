@@ -57,6 +57,45 @@ class CandidateController extends Controller
         return view('admin.candidates.show', compact('candidate'));
     }
 
+    public function edit(User $candidate)
+    {
+        return view('admin.candidates.edit', compact('candidate'));
+    }
+
+    public function update(Request $request, User $candidate)
+    {
+        $validated = $request->validate([
+            'name'       => ['required', 'string', 'max:255'],
+            'email'      => ['required', 'email', 'max:255', "unique:users,email,{$candidate->id}"],
+            'student_id' => ['nullable', 'string', 'max:50', "unique:users,student_id,{$candidate->id}"],
+            'password'   => ['nullable', 'string', 'min:6'],
+            'phone'      => ['nullable', 'string', 'max:30'],
+            'role'       => ['nullable', 'in:candidate,proctor,admin'],
+            'is_active'  => ['boolean'],
+        ]);
+
+        if (empty($validated['role'])) {
+            $validated['role'] = $candidate->role;
+        }
+
+        if (!empty($validated['password'])) {
+            $validated['password'] = Hash::make($validated['password']);
+        } else {
+            unset($validated['password']);
+        }
+
+        $validated['is_active'] = $request->boolean('is_active');
+
+        $candidate->update($validated);
+
+        AuditLogService::log('update_user', 'User', $candidate->id, [
+            'name' => $candidate->name,
+            'role' => $candidate->role,
+        ]);
+
+        return redirect()->route('admin.candidates.show', $candidate)->with('success', "Candidate '{$candidate->name}' profile updated successfully.");
+    }
+
     public function toggleStatus(User $candidate)
     {
         $candidate->is_active = !$candidate->is_active;

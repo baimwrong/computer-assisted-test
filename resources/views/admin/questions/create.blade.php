@@ -41,18 +41,30 @@
 
                     <!-- Options Container: Single Choice / Multiple Choice -->
                     <div id="choices-container">
-                        <label class="form-label fw-semibold d-block">Options & Answer Key</label>
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <label class="form-label fw-semibold mb-0">Options & Answer Key</label>
+                            <button type="button" class="btn btn-outline-primary btn-sm" onclick="addOptionRow()">
+                                <i class="bi bi-plus-circle me-1"></i> Add Choice
+                            </button>
+                        </div>
                         <p class="text-muted small">Select the radio / checkbox next to the choice to mark it as the correct answer.</p>
 
-                        @foreach (['A', 'B', 'C', 'D'] as $idx => $letter)
-                            <div class="input-group mb-2">
-                                <span class="input-group-text bg-light fw-bold">{{ $letter }}</span>
-                                <div class="input-group-text bg-white">
-                                    <input class="form-check-input choice-selector mt-0" type="radio" name="correct_options[]" value="{{ $idx }}" id="choice_check_{{ $idx }}" {{ $idx === 0 ? 'checked' : '' }}>
+                        <div id="options-list">
+                            @foreach (['A', 'B', 'C', 'D'] as $idx => $letter)
+                                <div class="input-group mb-2 option-row" data-index="{{ $idx }}">
+                                    <span class="input-group-text bg-light fw-bold letter-badge">{{ $letter }}</span>
+                                    <div class="input-group-text bg-white">
+                                        <input class="form-check-input choice-selector mt-0" type="radio" name="correct_options[]" value="{{ $idx }}" id="choice_check_{{ $idx }}" {{ $idx === 0 ? 'checked' : '' }}>
+                                    </div>
+                                    <input type="text" name="options[]" class="form-control" placeholder="Option {{ $letter }} text..." required>
+                                    @if ($idx >= 2)
+                                        <button type="button" class="btn btn-outline-danger" onclick="removeOptionRow(this)" title="Remove option">
+                                            <i class="bi bi-x-lg"></i>
+                                        </button>
+                                    @endif
                                 </div>
-                                <input type="text" name="options[]" class="form-control" placeholder="Option {{ $letter }} text..." required>
-                            </div>
-                        @endforeach
+                            @endforeach
+                        </div>
                     </div>
 
                     <!-- Container: True / False -->
@@ -142,27 +154,99 @@
 </form>
 
 <script>
+    const alphabet = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+
     function switchQuestionType(type) {
         const choices = document.getElementById('choices-container');
         const tf = document.getElementById('tf-container');
         const sa = document.getElementById('short-answer-container');
         const selectors = document.querySelectorAll('.choice-selector');
+        const optionInputs = document.querySelectorAll('input[name="options[]"]');
 
         choices.style.display = 'none';
         tf.style.display = 'none';
         sa.style.display = 'none';
 
-        if (type === 'single_choice') {
+        if (type === 'single_choice' || type === 'multiple_choice') {
             choices.style.display = 'block';
-            selectors.forEach(s => s.type = 'radio');
-        } else if (type === 'multiple_choice') {
-            choices.style.display = 'block';
-            selectors.forEach(s => s.type = 'checkbox');
-        } else if (type === 'true_false') {
-            tf.style.display = 'block';
-        } else if (type === 'short_answer') {
-            sa.style.display = 'block';
+            optionInputs.forEach(i => {
+                i.disabled = false;
+                i.required = true;
+            });
+            selectors.forEach(s => {
+                s.disabled = false;
+                s.type = (type === 'multiple_choice' ? 'checkbox' : 'radio');
+            });
+        } else {
+            optionInputs.forEach(i => {
+                i.disabled = true;
+                i.required = false;
+            });
+            selectors.forEach(s => s.disabled = true);
+
+            if (type === 'true_false') {
+                tf.style.display = 'block';
+            } else if (type === 'short_answer') {
+                sa.style.display = 'block';
+            }
         }
+    }
+
+    function reindexOptions() {
+        const rows = document.querySelectorAll('#options-list .option-row');
+        const isMultiple = document.getElementById('question_type').value === 'multiple_choice';
+
+        rows.forEach((row, idx) => {
+            const letter = alphabet[idx] || String.fromCharCode(65 + idx);
+            row.dataset.index = idx;
+            row.querySelector('.letter-badge').textContent = letter;
+            
+            const selector = row.querySelector('.choice-selector');
+            selector.value = idx;
+            selector.id = `choice_check_${idx}`;
+            selector.type = isMultiple ? 'checkbox' : 'radio';
+
+            const textInput = row.querySelector('input[name="options[]"]');
+            textInput.placeholder = `Option ${letter} text...`;
+        });
+    }
+
+    function addOptionRow() {
+        const list = document.getElementById('options-list');
+        const count = list.querySelectorAll('.option-row').length;
+        if (count >= 6) {
+            alert('A maximum of 6 answer choices is supported.');
+            return;
+        }
+
+        const letter = alphabet[count] || String.fromCharCode(65 + count);
+        const isMultiple = document.getElementById('question_type').value === 'multiple_choice';
+
+        const row = document.createElement('div');
+        row.className = 'input-group mb-2 option-row';
+        row.dataset.index = count;
+        row.innerHTML = `
+            <span class="input-group-text bg-light fw-bold letter-badge">${letter}</span>
+            <div class="input-group-text bg-white">
+                <input class="form-check-input choice-selector mt-0" type="${isMultiple ? 'checkbox' : 'radio'}" name="correct_options[]" value="${count}" id="choice_check_${count}">
+            </div>
+            <input type="text" name="options[]" class="form-control" placeholder="Option ${letter} text..." required>
+            <button type="button" class="btn btn-outline-danger" onclick="removeOptionRow(this)" title="Remove option">
+                <i class="bi bi-x-lg"></i>
+            </button>
+        `;
+        list.appendChild(row);
+        reindexOptions();
+    }
+
+    function removeOptionRow(btn) {
+        const list = document.getElementById('options-list');
+        if (list.querySelectorAll('.option-row').length <= 2) {
+            alert('A multiple choice question must have at least 2 choices.');
+            return;
+        }
+        btn.closest('.option-row').remove();
+        reindexOptions();
     }
 </script>
 @endsection

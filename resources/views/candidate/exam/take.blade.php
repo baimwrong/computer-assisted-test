@@ -249,6 +249,32 @@
         </div>
     </div>
 </div>
+
+@if ($exam->enforce_fullscreen)
+<!-- FULLSCREEN GATEWAY MODAL -->
+<div class="modal fade" id="fullscreenPromptModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1" aria-labelledby="fullscreenPromptModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg">
+            <div class="modal-header bg-dark text-white">
+                <h5 class="modal-title fw-bold" id="fullscreenPromptModalLabel">
+                    <i class="bi bi-arrows-fullscreen text-warning me-2"></i> Fullscreen Mode Required
+                </h5>
+            </div>
+            <div class="modal-body p-4 text-center">
+                <i class="bi bi-shield-lock-fill text-warning fs-1 mb-3 d-block"></i>
+                <h5 class="fw-bold mb-2">Automated Exam Proctoring</h5>
+                <p class="text-muted small mb-4">
+                    This examination requires your browser to remain in <strong>full-screen mode</strong> at all times.
+                    Switching tabs, minimizing the window, or exiting full-screen will be recorded as a proctoring violation.
+                </p>
+                <button type="button" id="btn-enter-fullscreen-modal" class="btn btn-primary btn-lg px-4 py-2 fw-bold w-100 shadow-sm">
+                    <i class="bi bi-arrows-fullscreen me-2"></i> Enter Fullscreen & Begin
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+@endif
 @endsection
 
 @push('scripts')
@@ -268,6 +294,29 @@
     }
 
     document.addEventListener('DOMContentLoaded', function () {
+        @if ($exam->enforce_fullscreen)
+        if (!document.fullscreenElement) {
+            const fsModalEl = document.getElementById('fullscreenPromptModal');
+            if (fsModalEl && window.bootstrap) {
+                const fsModal = new bootstrap.Modal(fsModalEl, { backdrop: 'static', keyboard: false });
+                fsModal.show();
+                document.getElementById('btn-enter-fullscreen-modal')?.addEventListener('click', () => {
+                    const el = document.documentElement;
+                    const req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+                    if (req) {
+                        req.call(el).then(() => {
+                            fsModal.hide();
+                        }).catch(() => {
+                            fsModal.hide();
+                        });
+                    } else {
+                        fsModal.hide();
+                    }
+                });
+            }
+        }
+        @endif
+
         // Instantiate the CAT testing engine
         window.catEngine = new CatExamEngine({
             attemptId: {{ $attempt->id }},

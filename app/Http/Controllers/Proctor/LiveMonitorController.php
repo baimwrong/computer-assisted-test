@@ -56,6 +56,8 @@ class LiveMonitorController extends Controller
                 'total_questions'    => $att->total_questions,
                 'remaining_seconds'  => $att->remainingSeconds(),
                 'status'             => $att->status,
+                'connection_status'  => $att->connectionStatus(),
+                'last_seen_at'       => $att->last_seen_at ? $att->last_seen_at->toTimeString() : null,
                 'violation_count'    => $att->violation_count,
                 'ip_address'         => $att->ip_address,
                 'started_at'         => $att->started_at->toTimeString(),
@@ -116,5 +118,44 @@ class LiveMonitorController extends Controller
         ]);
 
         return back()->with('success', "Attempt for {$attempt->user->name} was terminated due to security violation.");
+    }
+
+    public function resetViolations(ExamAttempt $attempt)
+    {
+        $previous = $attempt->violation_count;
+        $attempt->violation_count = 0;
+        $attempt->save();
+
+        AuditLogService::log('proctor_reset_violations', 'ExamAttempt', $attempt->id, [
+            'previous_violations' => $previous,
+            'candidate'           => $attempt->user->name,
+        ]);
+
+        return back()->with('success', "Security violations reset to 0 for {$attempt->user->name}.");
+    }
+
+    public function resumeSession(Request $request, ExamAttempt $attempt)
+    {
+        $extraMinutes = (int) $request->input('minutes', 10);
+        $now = Carbon::now();
+
+        $newExpiry = ($attempt->expires_at && $attempt->expires_at->gt($now))
+            ? $attempt->expires_at->copy()->addMinutes($extraMinutes)
+            : $now->copy()->addMinutes($extraMinutes);
+
+        $attempt->update([
+            'status'          => 'in_progress',
+            'submitted_at'    => null,
+            'expires_at'      => $newExpiry,
+            'violation_count' => 0,
+            'last_seen_at'    => $now,
+        ]);
+
+        AuditLogService::log('proctor_resume_session', 'ExamAttempt', $attempt->id, [
+            'new_expiry' => $newExpiry->toIso8601String(),
+            'candidate'  => $attempt->user->name,
+        ]);
+
+        return back()->with('success', "Session for {$attempt->user->name} has been resumed with {$extraMinutes} minutes remaining.");
     }
 }

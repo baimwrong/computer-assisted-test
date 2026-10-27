@@ -96,16 +96,24 @@ class ExamEngineService
                 ],
             ]);
 
-            // Pre-seed attempt answers
+            // High-concurrency bulk insertion for attempt answers
+            $nowTimestamp = Carbon::now();
+            $answersToInsert = [];
             foreach ($questions as $question) {
-                AttemptAnswer::create([
+                $answersToInsert[] = [
                     'attempt_id'           => $attempt->id,
                     'question_id'          => $question->id,
                     'selected_option_ids'  => null,
                     'text_answer'          => null,
+                    'is_correct'           => null,
+                    'points_awarded'       => 0.00,
                     'is_marked_for_review' => false,
-                ]);
+                    'answered_at'          => null,
+                    'created_at'           => $nowTimestamp,
+                    'updated_at'           => $nowTimestamp,
+                ];
             }
+            AttemptAnswer::insert($answersToInsert);
 
             AuditLogService::log('exam_started', 'ExamAttempt', $attempt->id, [
                 'exam_title' => $exam->title,
@@ -131,24 +139,31 @@ class ExamEngineService
             throw new Exception('Exam duration has expired. Test has been automatically submitted.');
         }
 
-        $answer = AttemptAnswer::firstOrCreate(
-            ['attempt_id' => $attempt->id, 'question_id' => $questionId],
-            [
+        $answer = AttemptAnswer::where('attempt_id', $attempt->id)
+            ->where('question_id', $questionId)
+            ->first();
+
+        if (!$answer) {
+            $answer = AttemptAnswer::create([
+                'attempt_id'           => $attempt->id,
+                'question_id'          => $questionId,
                 'selected_option_ids'  => null,
                 'text_answer'          => null,
                 'is_marked_for_review' => false,
-            ]
-        );
+            ]);
+        }
 
         $updateData = ['answered_at' => Carbon::now()];
 
         if (array_key_exists('selected_option_ids', $data)) {
             $selected = $data['selected_option_ids'];
-            $updateData['selected_option_ids'] = is_array($selected) ? array_values(array_filter($selected)) : null;
+            $filtered = is_array($selected) ? array_values(array_filter($selected)) : null;
+            $updateData['selected_option_ids'] = !empty($filtered) ? $filtered : null;
         }
 
         if (array_key_exists('text_answer', $data)) {
-            $updateData['text_answer'] = $data['text_answer'];
+            $text = is_string($data['text_answer']) ? trim($data['text_answer']) : null;
+            $updateData['text_answer'] = ($text !== '' && $text !== null) ? $text : null;
         }
 
         if (array_key_exists('is_marked_for_review', $data)) {
@@ -157,11 +172,14 @@ class ExamEngineService
 
         $answer->update($updateData);
 
-        // Recalculate answered count
+        // Recalculate answered count accurately (ignoring empty strings)
         $answeredCount = AttemptAnswer::where('attempt_id', $attempt->id)
             ->where(function ($query) {
                 $query->whereNotNull('selected_option_ids')
-                      ->orWhereNotNull('text_answer');
+                      ->orWhere(function ($q) {
+                          $q->whereNotNull('text_answer')
+                            ->where('text_answer', '!=', '');
+                      });
             })
             ->count();
 

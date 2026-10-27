@@ -28,7 +28,7 @@ Route::get('/', function () {
 
 Route::middleware('guest')->group(function () {
     Route::get('/login', [AuthController::class, 'showLogin'])->name('login');
-    Route::post('/login', [AuthController::class, 'login'])->name('login.post');
+    Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:10,1')->name('login.post');
 });
 
 Route::middleware('auth')->group(function () {
@@ -59,6 +59,8 @@ Route::middleware('auth')->group(function () {
         Route::get('candidates/create', [CandidateController::class, 'create'])->name('candidates.create');
         Route::post('candidates', [CandidateController::class, 'store'])->name('candidates.store');
         Route::get('candidates/{candidate}', [CandidateController::class, 'show'])->name('candidates.show');
+        Route::get('candidates/{candidate}/edit', [CandidateController::class, 'edit'])->name('candidates.edit');
+        Route::put('candidates/{candidate}', [CandidateController::class, 'update'])->name('candidates.update');
         Route::post('candidates/{candidate}/toggle-status', [CandidateController::class, 'toggleStatus'])->name('candidates.toggle-status');
         Route::delete('candidates/{candidate}', [CandidateController::class, 'destroy'])->name('candidates.destroy');
 
@@ -86,6 +88,8 @@ Route::middleware('auth')->group(function () {
         Route::post('/monitor/{attempt}/extra-time', [LiveMonitorController::class, 'grantExtraTime'])->name('monitor.extra-time');
         Route::post('/monitor/{attempt}/force-submit', [LiveMonitorController::class, 'forceSubmit'])->name('monitor.force-submit');
         Route::post('/monitor/{attempt}/terminate', [LiveMonitorController::class, 'terminate'])->name('monitor.terminate');
+        Route::post('/monitor/{attempt}/reset-violations', [LiveMonitorController::class, 'resetViolations'])->name('monitor.reset-violations');
+        Route::post('/monitor/{attempt}/resume', [LiveMonitorController::class, 'resumeSession'])->name('monitor.resume');
     });
 
     // ==========================================
@@ -99,9 +103,9 @@ Route::middleware('auth')->group(function () {
         Route::get('/exam/{exam}/lobby', [ExamTakingController::class, 'lobby'])->name('exam.lobby');
         Route::post('/exam/{exam}/start', [ExamTakingController::class, 'start'])->name('exam.start');
         Route::get('/exam/{attempt}/take', [ExamTakingController::class, 'take'])->name('exam.take');
-        Route::post('/exam/{attempt}/autosave', [ExamTakingController::class, 'autosave'])->name('exam.autosave');
-        Route::post('/exam/{attempt}/heartbeat', [ExamTakingController::class, 'heartbeat'])->name('exam.heartbeat');
-        Route::post('/exam/{attempt}/violation', [ExamTakingController::class, 'logViolation'])->name('exam.violation');
+        Route::post('/exam/{attempt}/autosave', [ExamTakingController::class, 'autosave'])->middleware('throttle:120,1')->name('exam.autosave');
+        Route::post('/exam/{attempt}/heartbeat', [ExamTakingController::class, 'heartbeat'])->middleware('throttle:60,1')->name('exam.heartbeat');
+        Route::post('/exam/{attempt}/violation', [ExamTakingController::class, 'logViolation'])->middleware('throttle:60,1')->name('exam.violation');
         Route::post('/exam/{attempt}/submit', [ExamTakingController::class, 'submit'])->name('exam.submit');
         Route::get('/exam/{attempt}/result', [ExamTakingController::class, 'result'])->name('exam.result');
         Route::get('/exam/{attempt}/review', [ExamTakingController::class, 'review'])->name('exam.review');

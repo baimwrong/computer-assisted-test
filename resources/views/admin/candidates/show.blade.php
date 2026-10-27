@@ -8,9 +8,14 @@
         <h3 class="fw-bold mb-1"><i class="bi bi-person-badge text-primary me-2"></i> Candidate Record: {{ $candidate->name }}</h3>
         <p class="text-muted mb-0">Student ID: <strong>{{ $candidate->student_id ?? 'N/A' }}</strong> | Email: {{ $candidate->email }}</p>
     </div>
-    <a href="{{ route('admin.candidates.index') }}" class="btn btn-outline-secondary">
-        <i class="bi bi-arrow-left me-1"></i> Back to Directory
-    </a>
+    <div class="d-flex gap-2">
+        <a href="{{ route('admin.candidates.edit', $candidate) }}" class="btn btn-primary">
+            <i class="bi bi-pencil-square me-1"></i> Edit / Reset Password
+        </a>
+        <a href="{{ route('admin.candidates.index') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left me-1"></i> Back to Directory
+        </a>
+    </div>
 </div>
 
 <div class="row g-4">

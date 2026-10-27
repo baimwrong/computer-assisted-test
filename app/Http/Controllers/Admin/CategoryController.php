@@ -57,6 +57,14 @@ class CategoryController extends Controller
 
     public function destroy(Category $category)
     {
+        if ($category->exams()->exists()) {
+            return back()->with('error', "Cannot delete category '{$category->name}' because active examinations are assigned to it. Please reassign or delete those exams first.");
+        }
+
+        if ($category->questions()->exists()) {
+            return back()->with('error', "Cannot delete category '{$category->name}' because questions are assigned to it. Please reassign or delete those questions first.");
+        }
+
         $name = $category->name;
         $category->delete();
 

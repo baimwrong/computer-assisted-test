@@ -275,4 +275,97 @@ class ExamTakingFlowTest extends TestCase
         $resultPage->assertStatus(200);
         $resultPage->assertSee('50.00%');
     }
+
+    public function test_candidate_cannot_access_review_or_result_while_attempt_is_in_progress(): void
+    {
+        $attempt = ExamAttempt::create([
+            'exam_id'         => $this->exam->id,
+            'user_id'         => $this->candidate->id,
+            'attempt_number'  => 1,
+            'status'          => 'in_progress',
+            'started_at'      => Carbon::now(),
+            'expires_at'      => Carbon::now()->addMinutes(45),
+            'total_questions' => 2,
+        ]);
+
+        // Attempting to access review while in progress must redirect back to take
+        $reviewResponse = $this->actingAs($this->candidate)
+            ->get(route('candidate.exam.review', $attempt));
+        $reviewResponse->assertRedirect(route('candidate.exam.take', $attempt));
+
+        // Attempting to access result while in progress must redirect back to take
+        $resultResponse = $this->actingAs($this->candidate)
+            ->get(route('candidate.exam.result', $attempt));
+        $resultResponse->assertRedirect(route('candidate.exam.take', $attempt));
+    }
+
+    public function test_autosaving_empty_text_does_not_count_as_answered(): void
+    {
+        $attempt = ExamAttempt::create([
+            'exam_id'         => $this->exam->id,
+            'user_id'         => $this->candidate->id,
+            'attempt_number'  => 1,
+            'status'          => 'in_progress',
+            'started_at'      => Carbon::now(),
+            'expires_at'      => Carbon::now()->addMinutes(45),
+            'total_questions' => 2,
+            'answered_questions' => 0,
+        ]);
+
+        AttemptAnswer::create([
+            'attempt_id'  => $attempt->id,
+            'question_id' => $this->question1->id,
+        ]);
+
+        // Candidate sends empty whitespace text answer
+        $response = $this->actingAs($this->candidate)
+            ->postJson(route('candidate.exam.autosave', $attempt), [
+                'question_id' => $this->question1->id,
+                'text_answer' => '   ',
+            ]);
+
+        $response->assertStatus(200);
+        $attempt->refresh();
+        $this->assertEquals(0, $attempt->answered_questions);
+    }
+
+    public function test_candidate_cannot_enter_lobby_or_start_upcoming_scheduled_exam(): void
+    {
+        $this->exam->update([
+            'start_time' => Carbon::now()->addDays(2),
+            'end_time'   => Carbon::now()->addDays(3),
+        ]);
+
+        $lobbyResponse = $this->actingAs($this->candidate)
+            ->get(route('candidate.exam.lobby', $this->exam));
+
+        $lobbyResponse->assertRedirect(route('candidate.dashboard'));
+        $lobbyResponse->assertSessionHas('warning');
+
+        $startResponse = $this->actingAs($this->candidate)
+            ->post(route('candidate.exam.start', $this->exam));
+
+        $startResponse->assertRedirect(route('candidate.dashboard'));
+        $startResponse->assertSessionHas('error');
+    }
+
+    public function test_candidate_cannot_enter_lobby_or_start_concluded_scheduled_exam(): void
+    {
+        $this->exam->update([
+            'start_time' => Carbon::now()->subDays(3),
+            'end_time'   => Carbon::now()->subDays(1),
+        ]);
+
+        $lobbyResponse = $this->actingAs($this->candidate)
+            ->get(route('candidate.exam.lobby', $this->exam));
+
+        $lobbyResponse->assertRedirect(route('candidate.dashboard'));
+        $lobbyResponse->assertSessionHas('warning');
+
+        $startResponse = $this->actingAs($this->candidate)
+            ->post(route('candidate.exam.start', $this->exam));
+
+        $startResponse->assertRedirect(route('candidate.dashboard'));
+        $startResponse->assertSessionHas('error');
+    }
 }

@@ -17,6 +17,7 @@ class ExamAttempt extends Model
         'user_id',
         'attempt_number',
         'status', // in_progress, completed, timed_out, terminated_violation
+        'last_seen_at',
         'started_at',
         'submitted_at',
         'expires_at',
@@ -37,6 +38,7 @@ class ExamAttempt extends Model
     {
         return [
             'attempt_number' => 'integer',
+            'last_seen_at' => 'datetime',
             'started_at' => 'datetime',
             'submitted_at' => 'datetime',
             'expires_at' => 'datetime',
@@ -94,6 +96,27 @@ class ExamAttempt extends Model
     public function isCompleted(): bool
     {
         return in_array($this->status, ['completed', 'timed_out', 'terminated_violation'], true);
+    }
+
+    public function connectionStatus(): string
+    {
+        if ($this->status !== 'in_progress') {
+            return 'concluded';
+        }
+
+        $referenceTime = $this->last_seen_at ?? $this->started_at;
+        if (!$referenceTime) {
+            return 'offline';
+        }
+
+        $diffSeconds = abs(Carbon::now()->diffInSeconds($referenceTime));
+        if ($diffSeconds <= 35) {
+            return 'online';
+        } elseif ($diffSeconds <= 75) {
+            return 'lagging';
+        }
+
+        return 'offline';
     }
 
     public function timeSpentFormatted(): string

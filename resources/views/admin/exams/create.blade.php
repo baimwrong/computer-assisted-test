@@ -53,6 +53,18 @@
                             </select>
                         </div>
 
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Schedule Window: Start Date & Time</label>
+                            <input type="datetime-local" name="start_time" class="form-control" value="{{ old('start_time') }}">
+                            <small class="text-muted">Leave blank if exam is available immediately.</small>
+                        </div>
+
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Schedule Window: End Date & Time</label>
+                            <input type="datetime-local" name="end_time" class="form-control" value="{{ old('end_time') }}">
+                            <small class="text-muted">Leave blank if exam has no deadline date.</small>
+                        </div>
+
                         <div class="col-12">
                             <label class="form-label fw-semibold">Description</label>
                             <textarea name="description" class="form-control" rows="3" placeholder="Brief overview of the exam syllabus and objectives...">{{ old('description') }}</textarea>

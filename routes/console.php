@@ -2,6 +2,7 @@
 
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Schedule;
 use App\Models\ExamAttempt;
 use App\Services\ExamGradingService;
 use Carbon\Carbon;
@@ -32,3 +33,5 @@ Artisan::command('cat:cleanup-expired-attempts', function (ExamGradingService $g
 
     $this->info("Successfully finalized {$count} expired exam sessions.");
 })->purpose('Auto-submit expired exam attempts in the background');
+
+Schedule::command('cat:cleanup-expired-attempts')->everyMinute()->withoutOverlapping();

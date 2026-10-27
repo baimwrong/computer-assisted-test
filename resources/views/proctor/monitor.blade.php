@@ -53,9 +53,21 @@
                 </thead>
                 <tbody id="sessions-table-body">
                     @forelse ($activeAttempts as $att)
+                        @php
+                            $connStatus = $att->connectionStatus();
+                        @endphp
                         <tr id="session-row-{{ $att->id }}" data-attempt-id="{{ $att->id }}">
                             <td>
-                                <div class="fw-bold">{{ $att->user->name }}</div>
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="fw-bold">{{ $att->user->name }}</span>
+                                    @if ($connStatus === 'online')
+                                        <span class="badge bg-success-subtle text-success border border-success-subtle" title="Active heartbeat received"><i class="bi bi-circle-fill fs-8 me-1 text-success"></i>Live</span>
+                                    @elseif ($connStatus === 'lagging')
+                                        <span class="badge bg-warning-subtle text-warning border border-warning-subtle" title="Heartbeat delayed (30-75s)"><i class="bi bi-circle-fill fs-8 me-1 text-warning"></i>Lagging</span>
+                                    @else
+                                        <span class="badge bg-danger-subtle text-danger border border-danger-subtle" title="No heartbeat received (>75s)"><i class="bi bi-circle-fill fs-8 me-1 text-danger"></i>No Ping</span>
+                                    @endif
+                                </div>
                                 <small class="text-muted font-monospace">{{ $att->user->student_id ?? $att->user->email }}</small>
                             </td>
                             <td>
@@ -102,6 +114,14 @@
                                     <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#modalExtraTime-{{ $att->id }}" title="Grant Extra Time">
                                         <i class="bi bi-plus-circle"></i> +Time
                                     </button>
+
+                                    <!-- Reset Violations -->
+                                    <form action="{{ route('proctor.monitor.reset-violations', $att) }}" method="POST" class="d-inline" onsubmit="return confirm('Reset violations to 0 for {{ $att->user->name }}?');">
+                                        @csrf
+                                        <button type="submit" class="btn btn-outline-info" title="Reset Violations to 0">
+                                            <i class="bi bi-shield-slash"></i>
+                                        </button>
+                                    </form>
 
                                     <!-- Force Submit -->
                                     <form action="{{ route('proctor.monitor.force-submit', $att) }}" method="POST" class="d-inline" onsubmit="return confirm('Force submit candidate test?');">
@@ -184,6 +204,16 @@
         ].join(':');
     }
 
+    function renderConnectionBadge(status) {
+        if (status === 'online') {
+            return `<span class="badge bg-success-subtle text-success border border-success-subtle" title="Active heartbeat received"><i class="bi bi-circle-fill fs-8 me-1 text-success"></i>Live</span>`;
+        } else if (status === 'lagging') {
+            return `<span class="badge bg-warning-subtle text-warning border border-warning-subtle" title="Heartbeat delayed (30-75s)"><i class="bi bi-circle-fill fs-8 me-1 text-warning"></i>Lagging</span>`;
+        } else {
+            return `<span class="badge bg-danger-subtle text-danger border border-danger-subtle" title="No heartbeat received (>75s)"><i class="bi bi-circle-fill fs-8 me-1 text-danger"></i>No Ping</span>`;
+        }
+    }
+
     function renderViolationBadge(count) {
         if (count === 0) {
             return `<span class="badge bg-success-subtle text-success border border-success-subtle">
@@ -205,7 +235,10 @@
         return `
             <tr id="session-row-${att.id}" data-attempt-id="${att.id}">
                 <td>
-                    <div class="fw-bold">${att.candidate_name}</div>
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="fw-bold">${att.candidate_name}</span>
+                        <span class="conn-badge-slot">${renderConnectionBadge(att.connection_status)}</span>
+                    </div>
                     <small class="text-muted font-monospace">${att.student_id}</small>
                 </td>
                 <td>
@@ -239,6 +272,12 @@
                         <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#modalExtraTime-${att.id}" title="Grant Extra Time">
                             <i class="bi bi-plus-circle"></i> +Time
                         </button>
+                        <form action="${baseActionUrl}/${att.id}/reset-violations" method="POST" class="d-inline" onsubmit="return confirm('Reset violations to 0 for ${att.candidate_name}?');">
+                            <input type="hidden" name="_token" value="${csrfToken}">
+                            <button type="submit" class="btn btn-outline-info" title="Reset Violations to 0">
+                                <i class="bi bi-shield-slash"></i>
+                            </button>
+                        </form>
                         <form action="${baseActionUrl}/${att.id}/force-submit" method="POST" class="d-inline" onsubmit="return confirm('Force submit candidate test?');">
                             <input type="hidden" name="_token" value="${csrfToken}">
                             <button type="submit" class="btn btn-outline-warning" title="Force Submit">
@@ -325,6 +364,10 @@
             const pct = att.total_questions > 0 ? Math.round((att.answered_questions / att.total_questions) * 100) : 0;
 
             if (existingRow) {
+                // Update connection status
+                const connSlot = existingRow.querySelector('.conn-badge-slot');
+                if (connSlot) connSlot.innerHTML = renderConnectionBadge(att.connection_status);
+
                 // Update progress
                 const pText = existingRow.querySelector('.progress-text');
                 const pPct = existingRow.querySelector('.progress-pct');

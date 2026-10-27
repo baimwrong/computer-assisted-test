@@ -217,4 +217,59 @@ class ExamGradingServiceTest extends TestCase
         $this->assertFalse((bool) $graded->is_passed);
         $this->assertEquals(1, $graded->incorrect_answers);
     }
+
+    public function test_exam_level_negative_marking_rate_applies_when_question_negative_points_is_zero(): void
+    {
+        // Question 1: Correct answer (5 points)
+        $q1 = Question::create([
+            'exam_id'         => $this->exam->id,
+            'question_text'   => 'What is 2 + 2?',
+            'question_type'   => 'single_choice',
+            'points'          => 5.00,
+            'negative_points' => 0.00, // default - should inherit exam rate (0.50)
+            'is_active'       => true,
+        ]);
+        $q1Correct = QuestionOption::create(['question_id' => $q1->id, 'option_text' => '4', 'is_correct' => true, 'order_index' => 1]);
+
+        // Question 2: Incorrect answer (-0.50 from exam negative_mark_rate)
+        $q2 = Question::create([
+            'exam_id'         => $this->exam->id,
+            'question_text'   => 'Is the sun a planet?',
+            'question_type'   => 'true_false',
+            'points'          => 5.00,
+            'negative_points' => 0.00, // default - should inherit exam rate (0.50)
+            'is_active'       => true,
+        ]);
+        $q2Wrong = QuestionOption::create(['question_id' => $q2->id, 'option_text' => 'True', 'is_correct' => false, 'order_index' => 1]);
+        $q2Right = QuestionOption::create(['question_id' => $q2->id, 'option_text' => 'False', 'is_correct' => true, 'order_index' => 2]);
+
+        $attempt = ExamAttempt::create([
+            'exam_id'         => $this->exam->id,
+            'user_id'         => $this->candidate->id,
+            'attempt_number'  => 1,
+            'status'          => 'in_progress',
+            'started_at'      => Carbon::now(),
+            'expires_at'      => Carbon::now()->addMinutes(30),
+            'total_questions' => 2,
+        ]);
+
+        AttemptAnswer::create([
+            'attempt_id'          => $attempt->id,
+            'question_id'         => $q1->id,
+            'selected_option_ids' => [$q1Correct->id],
+        ]);
+
+        AttemptAnswer::create([
+            'attempt_id'          => $attempt->id,
+            'question_id'         => $q2->id,
+            'selected_option_ids' => [$q2Wrong->id], // wrong!
+        ]);
+
+        $graded = $this->gradingService->gradeAttempt($attempt, 'completed');
+
+        // Score should be 5.00 - 0.50 = 4.50
+        $this->assertEquals(4.50, (float) $graded->score);
+        $this->assertEquals(1, $graded->correct_answers);
+        $this->assertEquals(1, $graded->incorrect_answers);
+    }
 }

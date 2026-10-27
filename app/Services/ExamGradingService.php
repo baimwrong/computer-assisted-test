@@ -118,9 +118,9 @@ class ExamGradingService
                         $correctCount++;
                     } else {
                         $incorrectCount++;
-                        // Apply negative marking: question penalty overrides exam rate if specified
+                        // Apply negative marking: question penalty overrides exam rate if specified (> 0)
                         if ($exam->negative_marking) {
-                            $penalty = ($question->negative_points !== null && (float) $question->negative_points >= 0)
+                            $penalty = ($question->negative_points !== null && (float) $question->negative_points > 0)
                                 ? (float) $question->negative_points
                                 : (float) ($exam->negative_mark_rate ?? 0);
                             $pointsAwarded -= $penalty;

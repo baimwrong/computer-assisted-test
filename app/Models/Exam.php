@@ -94,4 +94,14 @@ class Exam extends Model
 
         return true;
     }
+
+    public function isUpcoming(): bool
+    {
+        return $this->start_time && now()->lt($this->start_time);
+    }
+
+    public function isExpiredSchedule(): bool
+    {
+        return $this->end_time && now()->gt($this->end_time);
+    }
 }
